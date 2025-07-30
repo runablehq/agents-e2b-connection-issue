@@ -1,12 +1,214 @@
-# 🤖 Chat Agent Starter Kit
+# 🐛 Agents SDK - Minimal Reproduction Issue
 
 ![agents-header](https://github.com/user-attachments/assets/f6d99eeb-1803-4495-9c5e-3cf07a37b402)
 
 <a href="https://deploy.workers.cloudflare.com/?url=https://github.com/cloudflare/agents-starter"><img src="https://deploy.workers.cloudflare.com/button" alt="Deploy to Cloudflare"/></a>
 
-A starter template for building AI-powered chat agents using Cloudflare's Agent platform, powered by [`agents`](https://www.npmjs.com/package/agents). This project provides a foundation for creating interactive chat experiences with AI, complete with a modern UI and tool integration capabilities.
+**⚠️ ISSUE REPRODUCTION**: This repository demonstrates a critical issue with the [`agents`](https://www.npmjs.com/package/agents) SDK when deployed to Cloudflare Workers. Subsequent requests in the same chat room stall unpredictably at random steps, while the same code works perfectly locally. Added a fetch call to verify if network calls are broken once the agent breaks.
 
-## Features
+## 🚨 The Problem
+
+**Environment**: Cloudflare Workers (production deployment)  
+**Affected**: Agents SDK chat flow with multiple requests per session  
+**Status**: ❌ Broken in Workers, ✅ Works locally  
+
+### Issue Description
+
+We're migrating a Node.js project using the Agents SDK to Cloudflare Workers. The application uses:
+- One agent per user serving multiple chat sessions
+- SQLite for internal session mapping
+- E2B sandbox integration
+- Similar flow to the official chat bot example
+
+### Reproduction Steps
+
+1. Deploy this starter to Cloudflare Workers
+2. Send the first chat message → ✅ **Works perfectly**
+3. Send multiple messages in the same chat room but different sessions → ❌ **Hangs indefinitely** after some requests (~4 in this minimal reproduction, but about 1-2 requests in our production environment)
+4. Subsequent requests stall at random steps in production:
+   - Authentication
+   - E2B sandbox loading
+   - Tool initialization
+   - Network calls never resolve or timeout
+
+### Expected vs Actual Behavior
+
+| Environment | First Request | Subsequent Requests |
+|-------------|---------------|--------------------|
+| **Local Development** | ✅ Works | ✅ Works |
+| **Cloudflare Workers** | ✅ Works | ❌ Hangs randomly |
+
+### Current Flow (onChatMessage)
+
+```typescript
+// This flow works locally but fails on Workers after first request
+1. Authentication
+2. Load E2B sandbox
+3. Billing service check
+4. Initialize tools
+5. Return stream from Agents SDK  // ← Hangs here or earlier steps
+```
+
+## 🔍 How to Reproduce
+
+### Prerequisites
+- Cloudflare account
+- OpenAI API key
+- This exact starter template
+
+### Setup Instructions
+
+1. **Clone and Install**:
+   ```bash
+   npx create-cloudflare@latest --template cloudflare/agents-starter
+   cd agents-starter
+   npm install
+   ```
+
+2. **Configure Environment**:
+   ```bash
+   # Create .dev.vars file
+   echo "OPENAI_API_KEY=your_openai_api_key" > .dev.vars
+   ```
+
+3. **Test Locally** (this works):
+   ```bash
+   npm start
+   # Open browser, send multiple messages → All work fine
+   ```
+
+4. **Deploy to Workers** (this breaks):
+   ```bash
+   npm run deploy
+   # Visit deployed URL, send first message → Works
+   # Send second message → Hangs indefinitely
+   ```
+
+### 🔧 Technical Details
+
+**Architecture**:
+- One agent instance per user
+- Multiple chat sessions mapped via SQLite
+- Hyperdrive connection to PostgreSQL (GCP)
+- E2B sandbox integration
+- Streaming responses via Agents SDK
+
+**Failure Pattern**:
+- ✅ First request after deployment: Always succeeds
+- ❌ Subsequent requests: Hang at unpredictable steps
+- 🔄 No timeout or error - requests just never resolve
+- 🏠 Local development: No issues whatsoever
+
+**Affected Components**:
+- Authentication flow
+- E2B sandbox initialization
+- Tool system setup
+- Agents SDK streaming
+- Network calls in general
+
+## 📊 Issue Analysis
+
+### What We Know
+
+- **Timing**: Issue started recently (wasn't happening before)
+- **Scope**: Only affects Cloudflare Workers deployment
+- **Pattern**: First request always works, subsequent ones fail
+- **Randomness**: Failure occurs at different steps unpredictably
+- **No Errors**: Requests don't timeout or throw errors, they just hang
+
+### Suspected Causes
+
+1. **Workers Runtime Differences**: 
+   - Different event loop behavior
+   - Request/response lifecycle differences
+   - Memory or state management issues
+   - Max allowed connections
+
+2. **Agents SDK Integration**:
+   - Potential Workers-specific compatibility issue
+   - State persistence between requests
+   - Streaming response handling
+
+3. **External Dependencies**:
+   - E2B sandbox connection pooling
+   - Hyperdrive connection management
+   - SQLite state between requests
+
+### 🧪 Debugging Steps Taken
+
+- [x] Confirmed local development works perfectly
+- [x] Verified first request always succeeds in Workers
+- [x] Identified random failure points in subsequent requests
+- [x] Ruled out API key or authentication issues
+- [ ] Need investigation into Workers-specific behavior
+- [ ] Need Agents SDK team input on Workers compatibility
+
+## 📁 Project Structure
+
+```
+├── src/
+│   ├── app.tsx        # Chat UI implementation
+│   ├── server.ts      # ⚠️ Main agent logic (where issues occur)
+│   ├── tools.ts       # Tool definitions (hangs during init)
+│   ├── utils.ts       # Helper functions
+│   └── styles.css     # UI styling
+├── wrangler.jsonc     # Workers configuration
+└── .dev.vars.example  # Environment template
+```
+
+### 🔍 Key Files for Investigation
+
+- **`src/server.ts`**: Contains the main chat flow that hangs
+- **`src/tools.ts`**: Tool initialization that sometimes fails
+- **`wrangler.jsonc`**: Workers configuration that might affect behavior
+- **Network calls**: Any external API calls that hang in Workers
+
+## 🛠️ Help Needed
+
+### For Cloudflare Team
+
+1. **Workers Runtime Investigation**:
+   - Are there known issues with persistent connections in Workers?
+   - How should long-running agent sessions be handled?
+   - Any Workers-specific considerations for the Agents SDK?
+
+2. **Debugging Assistance**:
+   - Best practices for debugging hanging requests in Workers
+   - Logging/monitoring recommendations for this type of issue
+   - Workers-specific profiling tools
+
+### For Agents SDK Team
+
+1. **Workers Compatibility**:
+   - Is the Agents SDK fully tested on Cloudflare Workers?
+   - Any known limitations or required configurations?
+   - Recommended patterns for multi-request agent sessions?
+
+2. **State Management**:
+   - How should agent state persist between requests in Workers?
+   - Are there Workers-specific initialization patterns?
+   - Connection pooling best practices?
+
+### For Community
+
+1. **Similar Issues**:
+   - Has anyone experienced similar hanging request issues?
+   - Any workarounds or solutions found?
+   - Alternative deployment patterns that work?
+
+2. **Testing Help**:
+   - Can others reproduce this issue with the same setup?
+   - Different Workers configurations to try?
+   - Alternative agent architectures that work reliably?
+
+---
+
+## 📋 Original Template Information
+
+<details>
+<summary>Click to expand original starter template documentation</summary>
+
+### Features
 
 - 💬 Interactive chat interface with AI
 - 🛠️ Built-in tool system with human-in-the-loop confirmation
@@ -16,59 +218,9 @@ A starter template for building AI-powered chat agents using Cloudflare's Agent 
 - 🔄 State management and chat history
 - 🎨 Modern, responsive UI
 
-## Prerequisites
+### Customization Guide
 
-- Cloudflare account
-- OpenAI API key
-
-## Quick Start
-
-1. Create a new project:
-
-```bash
-npx create-cloudflare@latest --template cloudflare/agents-starter
-```
-
-2. Install dependencies:
-
-```bash
-npm install
-```
-
-3. Set up your environment:
-
-Create a `.dev.vars` file:
-
-```env
-OPENAI_API_KEY=your_openai_api_key
-```
-
-4. Run locally:
-
-```bash
-npm start
-```
-
-5. Deploy:
-
-```bash
-npm run deploy
-```
-
-## Project Structure
-
-```
-├── src/
-│   ├── app.tsx        # Chat UI implementation
-│   ├── server.ts      # Chat agent logic
-│   ├── tools.ts       # Tool definitions
-│   ├── utils.ts       # Helper functions
-│   └── styles.css     # UI styling
-```
-
-## Customization Guide
-
-### Adding New Tools
+#### Adding New Tools
 
 Add new tools in `tools.ts` using the tool builder:
 
@@ -89,143 +241,13 @@ const getCurrentTime = tool({
   parameters: z.object({}),
   execute: async () => new Date().toISOString(),
 });
-
-// Scheduling tool implementation
-const scheduleTask = tool({
-  description:
-    "schedule a task to be executed at a later time. 'when' can be a date, a delay in seconds, or a cron pattern.",
-  parameters: z.object({
-    type: z.enum(["scheduled", "delayed", "cron"]),
-    when: z.union([z.number(), z.string()]),
-    payload: z.string(),
-  }),
-  execute: async ({ type, when, payload }) => {
-    // ... see the implementation in tools.ts
-  },
-});
 ```
 
-To handle tool confirmations, add execution functions to the `executions` object:
+#### Use a different AI model provider
 
-```typescript
-export const executions = {
-  searchDatabase: async ({
-    query,
-    limit,
-  }: {
-    query: string;
-    limit?: number;
-  }) => {
-    // Implementation for when the tool is confirmed
-    const results = await db.search(query, limit);
-    return results;
-  },
-  // Add more execution handlers for other tools that require confirmation
-};
-```
+The starting implementation uses the [`ai-sdk`](https://sdk.vercel.ai/docs/introduction) and [OpenAI provider](https://sdk.vercel.ai/providers/ai-sdk-providers/openai), but you can use alternatives like [`workers-ai-provider`](https://sdk.vercel.ai/providers/community-providers/cloudflare-workers-ai) or [`anthropic`](https://sdk.vercel.ai/providers/ai-sdk-providers/anthropic).
 
-Tools can be configured in two ways:
-
-1. With an `execute` function for automatic execution
-2. Without an `execute` function, requiring confirmation and using the `executions` object to handle the confirmed action. NOTE: The keys in `executions` should match `toolsRequiringConfirmation` in `app.tsx`.
-
-### Use a different AI model provider
-
-The starting [`server.ts`](https://github.com/cloudflare/agents-starter/blob/main/src/server.ts) implementation uses the [`ai-sdk`](https://sdk.vercel.ai/docs/introduction) and the [OpenAI provider](https://sdk.vercel.ai/providers/ai-sdk-providers/openai), but you can use any AI model provider by:
-
-1. Installing an alternative AI provider for the `ai-sdk`, such as the [`workers-ai-provider`](https://sdk.vercel.ai/providers/community-providers/cloudflare-workers-ai) or [`anthropic`](https://sdk.vercel.ai/providers/ai-sdk-providers/anthropic) provider:
-2. Replacing the AI SDK with the [OpenAI SDK](https://github.com/openai/openai-node)
-3. Using the Cloudflare [Workers AI + AI Gateway](https://developers.cloudflare.com/ai-gateway/providers/workersai/#workers-binding) binding API directly
-
-For example, to use the [`workers-ai-provider`](https://sdk.vercel.ai/providers/community-providers/cloudflare-workers-ai), install the package:
-
-```sh
-npm install workers-ai-provider
-```
-
-Add an `ai` binding to `wrangler.jsonc`:
-
-```jsonc
-// rest of file
-  "ai": {
-    "binding": "AI"
-  }
-// rest of file
-```
-
-Replace the `@ai-sdk/openai` import and usage with the `workers-ai-provider`:
-
-```diff
-// server.ts
-// Change the imports
-- import { openai } from "@ai-sdk/openai";
-+ import { createWorkersAI } from 'workers-ai-provider';
-
-// Create a Workers AI instance
-+ const workersai = createWorkersAI({ binding: env.AI });
-
-// Use it when calling the streamText method (or other methods)
-// from the ai-sdk
-- const model = openai("gpt-4o-2024-11-20");
-+ const model = workersai("@cf/deepseek-ai/deepseek-r1-distill-qwen-32b")
-```
-
-Commit your changes and then run the `agents-starter` as per the rest of this README.
-
-### Modifying the UI
-
-The chat interface is built with React and can be customized in `app.tsx`:
-
-- Modify the theme colors in `styles.css`
-- Add new UI components in the chat container
-- Customize message rendering and tool confirmation dialogs
-- Add new controls to the header
-
-### Example Use Cases
-
-1. **Customer Support Agent**
-   - Add tools for:
-     - Ticket creation/lookup
-     - Order status checking
-     - Product recommendations
-     - FAQ database search
-
-2. **Development Assistant**
-   - Integrate tools for:
-     - Code linting
-     - Git operations
-     - Documentation search
-     - Dependency checking
-
-3. **Data Analysis Assistant**
-   - Build tools for:
-     - Database querying
-     - Data visualization
-     - Statistical analysis
-     - Report generation
-
-4. **Personal Productivity Assistant**
-   - Implement tools for:
-     - Task scheduling with flexible timing options
-     - One-time, delayed, and recurring task management
-     - Task tracking with reminders
-     - Email drafting
-     - Note taking
-
-5. **Scheduling Assistant**
-   - Build tools for:
-     - One-time event scheduling using specific dates
-     - Delayed task execution (e.g., "remind me in 30 minutes")
-     - Recurring tasks using cron patterns
-     - Task payload management
-     - Flexible scheduling patterns
-
-Each use case can be implemented by:
-
-1. Adding relevant tools in `tools.ts`
-2. Customizing the UI for specific interactions
-3. Extending the agent's capabilities in `server.ts`
-4. Adding any necessary external API integrations
+</details>
 
 ## Learn More
 
