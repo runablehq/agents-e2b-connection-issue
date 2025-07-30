@@ -4,8 +4,12 @@
   "compatibility_date": "2025-05-07",
   "compatibility_flags": [
     "nodejs_compat",
-    "nodejs_compat_populate_process_env",
   ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "keep_vars": true,
   "assets": {
     "directory": "public",
   },
@@ -20,7 +24,9 @@
   "migrations": [
     {
       "tag": "v1",
-      "new_sqlite_classes": ["Chat"],
+      "new_sqlite_classes": [
+        "Chat"
+      ],
     },
   ],
 }
